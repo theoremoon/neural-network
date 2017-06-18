@@ -12,6 +12,9 @@ class MLP {
         float LearningRate;
     }
     this(int[] layerSizes, float learningRate) {
+        if (layerSizes.length < 2) {
+            throw new Exception("Two or more layers required");
+        }
         LayerSizes = layerSizes.dup;
         LearningRate = learningRate;
 
@@ -33,7 +36,7 @@ class MLP {
 
     float[] Classfy(float[] input) {
         if (input.length != LayerSizes[0]) {
-            return [];
+            throw new Exception("Input layer size mismatched");
         }
         Outputs.length = LayerSizes.length;
         Outputs[0] = input.dup;
@@ -54,7 +57,7 @@ class MLP {
 
     void Training(float[] input, float[] desired) {
         if (input.length != LayerSizes[0] || desired.length != LayerSizes[$-1]) {
-            return;
+            throw new Exception("Input or output layer size mismatched");
         }
 
         Classfy(input);
