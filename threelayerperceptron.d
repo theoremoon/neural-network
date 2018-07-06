@@ -1,130 +1,165 @@
-import std.random;
-import std.math;
 import std.stdio;
+import std.math;
+import std.random;
 import std.algorithm;
 
+auto sigmoid(double x)
+{
+  return 1.0 / (1.0 + exp(-x));
+}
+auto sigmoid_d(double x)
+{
+  auto y = sigmoid(x);
+  return y * (1.0 - y);
+}
 
-class ThreeLayerPerceptron {
-    public {
-        int InputLayerSize, HiddenLayerSize, OutputLayerSize;
-        float[][] Input_Hidden_Weight, Hidden_Output_Weight;
-        float[] InputOutput, HiddenOutput, OutOutput;
-        float LearningRate;
-    }
-    this(int inputLayerSize, int hiddenLayerSize, int outputLayerSize, float learningRate) {
-        InputLayerSize = inputLayerSize;
-        HiddenLayerSize = hiddenLayerSize;
-        OutputLayerSize = outputLayerSize;
-        LearningRate = learningRate;
+struct PredicateResult
+{
+  public:
+    double[] hidden_input;
+    double[] hidden_us;
+    double[] hidden_output;
+    double[] output_input;
+    double[] output_us;
+    double[] output_output;
+}
 
-        Input_Hidden_Weight = new float[][](HiddenLayerSize, InputLayerSize);
-        Hidden_Output_Weight = new float[][](OutputLayerSize, HiddenLayerSize);
+class ThreeLayerPerceptron
+{
+  public:
+    int input_layer_size;
+    int hidden_layer_size;
+    int output_layer_size;
 
-        Random gen = rndGen();
-        for (int i = 0; i < HiddenLayerSize; i++) {
-            for (int j = 0; j < InputLayerSize; j++) {
-                Input_Hidden_Weight[i][j] = uniform(0f, 1f, gen) - 0.5;
-            }
+    double[][] input_hidden_weights;
+    double[][] hidden_output_weights;
+
+    double learn_rate;
+
+    this(int input_layer_size, int hidden_layer_size, int output_layer_size, double learn_rate)
+    {
+      this.learn_rate = learn_rate;
+      this.input_layer_size = input_layer_size;
+      this.hidden_layer_size = hidden_layer_size;
+      this.output_layer_size = output_layer_size;
+
+      this.input_hidden_weights = new double[][](hidden_layer_size, input_layer_size + 1);
+      this.hidden_output_weights = new double[][](output_layer_size, hidden_layer_size + 1);
+
+      Random gen = rndGen();
+      foreach (i; 0..hidden_layer_size) {
+        foreach (j; 0..input_layer_size + 1) {
+          input_hidden_weights[i][j] = uniform(-1.0, 1.0, gen);
         }
-        for (int i = 0; i < OutputLayerSize; i++) {
-            for (int j = 0 ; j < HiddenLayerSize; j++) {
-                Hidden_Output_Weight[i][j] = uniform(0f, 1f, gen) - 0.5;
-            }
-        }
-    }
-    double Sigmoid(double x) {
-        return 1f / (1+exp(-x));
-    }
+      }
 
-    float[] Classfy(float[] input) {
-        if (input.length != InputLayerSize) {
-            return [];
+      foreach (i; 0..output_layer_size) {
+        foreach (j; 0..hidden_layer_size + 1) {
+          hidden_output_weights[i][j] = uniform(-1.0, 1.0, gen);
         }
-        InputOutput = input.dup;
-
-        float[] hiddenInput = new float[](HiddenLayerSize);
-        hiddenInput.fill(0f);
-        for (int i = 0; i < HiddenLayerSize; i++) {
-            for (int j = 0; j < InputLayerSize; j++) {
-                hiddenInput[i] += InputOutput[j] * Input_Hidden_Weight[i][j];
-            }
-        }
-
-        HiddenOutput = new float[](HiddenLayerSize);
-        foreach (i, v; hiddenInput) {
-            HiddenOutput[i] = Sigmoid(v);
-        }
-
-        float[] outInput = new float[](OutputLayerSize);
-        outInput.fill(0f);
-        for (int i = 0; i < OutputLayerSize; i++) {
-            for (int j = 0; j < HiddenLayerSize; j++) {
-                outInput[i] += HiddenOutput[j] * Hidden_Output_Weight[i][j];
-            }
-        }
-
-        OutOutput = new float[](OutputLayerSize);
-        foreach (i, v; outInput) {
-            OutOutput[i] = Sigmoid(v);
-        }
-
-        return OutOutput;
+      }
     }
 
-    void Training(float[] input, float[] desired) {
-        if (input.length != InputLayerSize || desired.length != OutputLayerSize) {
-            return;
+    auto predicate(double[] input)
+    in
+    {
+      assert(input.length == this.input_layer_size);
+    }
+    do
+    {
+      input = [1.0] ~ input.dup;
+      auto hidden_us = new double[](hidden_layer_size);
+      hidden_us.fill(0.0);
+      foreach (i; 0..hidden_layer_size) {
+        foreach (j; 0..input_layer_size + 1) {
+          hidden_us[i] += input_hidden_weights[i][j] * input[j];
         }
+      }
 
-        Classfy(input);
+      auto hidden_output = new double[](hidden_layer_size);
+      foreach (i, u; hidden_us) {
+        hidden_output[i] = sigmoid(u);
+      }
 
-        float[][] hidden_Output_Weight_d = new float[][](OutputLayerSize, HiddenLayerSize);
-        for (int i = 0; i < OutputLayerSize; i++) {
-            auto memo = (OutOutput[i]-desired[i]) * OutOutput[i] * (1-OutOutput[i]);
-            for (int j = 0; j < HiddenLayerSize; j++) {
-                hidden_Output_Weight_d[i][j] =  memo * HiddenOutput[j];
-            }
-        }
+      auto output_input = [1.0] ~ hidden_output;
+      auto output_us = new double[](output_layer_size);
+      output_us.fill(0.0);
 
-        float[][] input_Hidden_Weight_d = new float[][](HiddenLayerSize, InputLayerSize);
-        for (int i = 0; i < HiddenLayerSize; i++) {
-            for (int j = 0; j < InputLayerSize; j++) {
-                input_Hidden_Weight_d[i][j] = 0f;
-                for (int k = 0; k < OutputLayerSize; k++) {
-                    input_Hidden_Weight_d[i][j] += (OutOutput[k]-desired[k]) * OutOutput[k] * (1-OutOutput[k]) * Hidden_Output_Weight[k][i];
-                }
-                input_Hidden_Weight_d[i][j] *= HiddenOutput[i] * (1-HiddenOutput[i]) * InputOutput[j];
-            }
+      foreach (i; 0..output_layer_size) {
+        foreach (j; 0..hidden_layer_size + 1) {
+          output_us[i] += hidden_output_weights[i][j] * output_input[j];
         }
+      }
 
-        foreach(i,v; hidden_Output_Weight_d) {
-            foreach (j,w; v) {
-                Hidden_Output_Weight[i][j] += -this.LearningRate * w;
-            }
+      auto output_output = new double[](output_layer_size);
+      foreach (i, u; output_us) {
+        output_output[i] = sigmoid(u);
+      }
+
+      return PredicateResult(input, hidden_us, hidden_output, output_input, output_us, output_output);
+    }
+
+    void training(double[] input, double[] expect)
+    in
+    {
+      assert(input.length == input_layer_size);
+      assert(expect.length == output_layer_size);
+    }
+    do
+    {
+      auto result = predicate(input);
+
+      auto deltas = new double[](hidden_layer_size + 1);
+      deltas.fill(0.0);
+      auto hidden_output_d = new double[][](output_layer_size, hidden_layer_size + 1);
+      foreach (i; 0..output_layer_size) {
+        foreach (j; 0..hidden_layer_size + 1) {
+          hidden_output_d[i][j] = (expect[i] - result.output_output[i]) * sigmoid_d(result.output_us[i]) * result.output_input[j];
+          if (j != hidden_layer_size) {
+            deltas[j] += (expect[i] - result.output_output[i]) * sigmoid_d(result.output_us[i]) * hidden_output_weights[i][j];
+          }
         }
-        foreach(i,v; input_Hidden_Weight_d) {
-            foreach (j,w;v) {
-                Input_Hidden_Weight[i][j] += -this.LearningRate * w;
-            }
+      }
+
+      auto input_hidden_d = new double[][](hidden_layer_size, input_layer_size + 1);
+      foreach (i; 0..hidden_layer_size) {
+        foreach (j; 0..input_layer_size + 1) {
+          input_hidden_d[i][j] = 0;
+          input_hidden_d[i][j] = deltas[i] * sigmoid_d(result.hidden_us[i]) * result.hidden_input[j];
         }
+      }
+
+      foreach (i; 0..output_layer_size) {
+        foreach (j; 0..hidden_layer_size + 1) {
+          hidden_output_weights[i][j] += learn_rate * hidden_output_d[i][j];
+        }
+      }
+
+      foreach (i; 0..hidden_layer_size) {
+        foreach (j; 0..output_layer_size + 1) {
+          input_hidden_weights[i][j] += learn_rate * input_hidden_d[i][j];
+        }
+      }
     }
 }
 
+
 void main()
 {
-    ThreeLayerPerceptron mlp = new ThreeLayerPerceptron(2, 10, 1, 0.3);
+  auto tlp = new ThreeLayerPerceptron(2, 30, 1, 0.5);
 
-    foreach(i; 0..3000) {
-        mlp.Training([1f, 1f], [0.01f]);
-        mlp.Training([1f, 0.01f], [1f]);
-        mlp.Training([0.01f, 1f], [1f]);
-        mlp.Training([0.01f, 0.01f], [0.01f]);
-    }
+  const auto T = 1.00;
+  const auto F = 0.01;
 
-    writeln("==RESULT==");
-    writeln(mlp.Classfy([1f,1f]));
-    writeln(mlp.Classfy([1f,0.01f]));
-    writeln(mlp.Classfy([0.01f,1f]));
-    writeln(mlp.Classfy([0.01f,0.01f]));
+  foreach(i; 0..3000) {
+    tlp.training([F, F], [F]);
+    tlp.training([F, T], [T]);
+    tlp.training([T, F], [T]);
+    tlp.training([T, T], [F]);
+  }
 
+  writeln(tlp.predicate([F, F]).output_output);
+  writeln(tlp.predicate([F, T]).output_output);
+  writeln(tlp.predicate([T, F]).output_output);
+  writeln(tlp.predicate([T, T]).output_output);
 }
