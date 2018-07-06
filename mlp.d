@@ -1,128 +1,220 @@
-import std.random;
-import std.math;
 import std.stdio;
+import std.math;
+import std.random;
+import std.range;
 import std.algorithm;
+import std.functional;
 
+auto sigmoid(double x)
+{
+  return 1.0 / (1.0 + exp(-x));
+}
+auto sigmoid_d(double x)
+{
+  auto y = sigmoid(x);
+  return y * (1.0 - y);
+}
+auto tanh_d(double x)
+{
+  return 1.0 - pow(tanh(x), 2);
+}
+auto relu(double x)
+{
+  return (x > 0) ? x : 0.0;
+}
+auto relu_d(double x)
+{
+  return (x > 0) ? 1.0 : 0.0;
+}
 
-class MLP {
-    public {
-        int[] LayerSizes;
-        float[][][] Weights;
-        float[][] Outputs;
-        float LearningRate;
+struct ForwardResult 
+{
+  public:
+    double[] input;
+    double[] us;
+    double[] output;
+}
+
+alias activateT = double delegate(double);
+alias activateFT = double function(double);
+class Layer
+{
+  public:
+    uint input_layer_size;
+    uint output_layer_size;
+
+    double[][] weights;
+
+    activateT activate;
+    activateT derived;
+
+    double learn_rate;
+
+    this (uint input_layer_size, uint output_layer_size, activateT activate, activateT derived, double learn_rate)
+    {
+      this.learn_rate = learn_rate;
+      this.activate = activate;
+      this.derived = derived;
+
+      this.input_layer_size = input_layer_size;
+      this.output_layer_size = output_layer_size;
+      this.weights = new double[][](output_layer_size, input_layer_size + 1);   // + 1 is weight for bias
+
+      auto rnd = rndGen();
+      foreach (i; 0..output_layer_size) {
+        foreach (j; 0..input_layer_size + 1) {
+          this.weights[i][j] = uniform(-1.0, 1.0, rnd);
+        }
+      }
     }
-    this(int[] layerSizes, float learningRate) {
-        if (layerSizes.length < 2) {
-            throw new Exception("Two or more layers required");
-        }
-        LayerSizes = layerSizes.dup;
-        LearningRate = learningRate;
 
-        Weights.length = LayerSizes.length-1;
-        Random gen = rndGen();
-        for (int i = 0; i < Weights.length; i++) {
-            Weights[i].length = LayerSizes[i+1];
-            for (int j = 0; j < LayerSizes[i+1]; j++) {
-                Weights[i][j].length = LayerSizes[i];
-                for (int k = 0; k < LayerSizes[i]; k++) {
-                    Weights[i][j][k] = uniform(0f,1f,gen)-0.5;
-                }
-            }
-        }
+    auto forward(double[] input)
+    in
+    {
+      assert(input.length == this.input_layer_size);
     }
-    double Sigmoid(double x) {
-        return 1f / (1+exp(-x));
-    }
+    do
+    {
+      input = [1.0] ~ input.dup;  // add bias
 
-    float[] Classfy(float[] input) {
-        if (input.length != LayerSizes[0]) {
-            throw new Exception("Input layer size mismatched");
+      auto us = new double[](output_layer_size);
+      us.fill(0.0);  // avoiding NaN
+
+      foreach (i; 0..output_layer_size) {
+        foreach (j; 0..input_layer_size + 1) {
+          us[i] += weights[i][j] * input[j];
         }
-        Outputs.length = LayerSizes.length;
-        Outputs[0] = input.dup;
+      }
 
-        for (int i = 1; i < Outputs.length; i++) {
-            Outputs[i].length = LayerSizes[i];
-            for (int j = 0; j < LayerSizes[i]; j++) {
-                float u = 0f;
-                for (int k = 0; k < LayerSizes[i-1]; k++) {
-                    u += Outputs[i-1][k] * Weights[i-1][j][k];
-                }
-                Outputs[i][j] = Sigmoid(u);
-            }
-        }
+      auto output = new double[](output_layer_size);
+      foreach (i, u; us) {
+        output[i] = activate(u);
+      }
 
-        return Outputs[$-1];
+      return ForwardResult(input, us, output);
     }
 
-    void Training(float[] input, float[] desired) {
-        if (input.length != LayerSizes[0] || desired.length != LayerSizes[$-1]) {
-            throw new Exception("Input or output layer size mismatched");
+    auto backward(double[] input, double[] us, double[] deltas)
+    {
+      double[] next_deltas = new double[](input_layer_size);
+      next_deltas.fill(0.0);
+      auto weights_d = new double[][](output_layer_size, input_layer_size + 1);
+
+      foreach (i; 0..output_layer_size) {
+        foreach (j; 0..input_layer_size + 1) {
+          weights_d[i][j] = deltas[i] * sigmoid_d(us[i]) * input[j];
+          if (j != input_layer_size) {
+            next_deltas[j] += deltas[i] * weights[i][j];
+          }
         }
+      }
 
-        Classfy(input);
-
-        float[][][] Weight_ds;
-        Weight_ds.length = LayerSizes.length-1;
-
-        // すべての重みを更新する
-        // Weight_ds[i]: i層からi+1層への重み
-        // j: 重みの行数（i+1層の大きさ）
-        // k: 重みの列数（i層の大きさ）
-        // l: i+1層からi+2層への重みの行数（i+2層の大きさ） 
-        for (int i = Weight_ds.length-1; i >= 0; i--) {
-            // 出力層
-            if (i == Weight_ds.length-1) {
-                Weight_ds[i].length = LayerSizes[i+1];
-                for (int j = 0; j < Weight_ds[i].length; j++) {
-                    auto memo = (Outputs[i+1][j] - desired[j]) * Outputs[i+1][j] * (1-Outputs[i+1][j]);
-                    Weight_ds[i][j].length = LayerSizes[i];
-                    for (int k = 0; k < Weight_ds[i][j].length; k++) {
-                        Weight_ds[i][j][k] = memo * Outputs[i][k];
-                    }
-                }
-            }
-
-            // それ以外
-            else {
-                Weight_ds[i].length = LayerSizes[i+1];
-                for (int j = 0; j < Weight_ds[i].length; j++) {
-                    Weight_ds[i][j].length = LayerSizes[i];
-                    for (int k = 0; k < Weight_ds[i][j].length; k++) {
-                        Weight_ds[i][j][k] = 0f;
-                        for (int l = 0; l < LayerSizes[i+2]; l++) {
-                            Weight_ds[i][j][k] += Weight_ds[i+1][l][j] * Weights[i+1][l][j];
-                        }
-                        Weight_ds[i][j][k] *= (1-Outputs[i+1][j]) * Outputs[i][k];
-                    }
-                }
-            }
+      foreach (i; 0..output_layer_size) {
+        foreach (j; 0..input_layer_size + 1) {
+          weights[i][j] += learn_rate * weights_d[i][j];
         }
-        foreach(i,u; Weight_ds) {
-            foreach(j,v; u) {
-                foreach (k,w;v) {
-                    Weights[i][j][k] += -this.LearningRate * w;
-                }
-            }
-        }
+      }
+
+      return next_deltas;
     }
 }
 
-void main()
+class MultiLayerPerceptron
 {
-    MLP mlp = new MLP([2, 10, 10, 1], 0.3);
+  public:
+    Layer[] layers = [];
+    uint input_layer_size = 0;
+    uint output_layer_size = 0;
 
-    foreach(i; 0..10000) {
-        mlp.Training([1f, 1f], [0.01f]);
-        mlp.Training([1f, 0.01f], [1f]);
-        mlp.Training([0.01f, 1f], [1f]);
-        mlp.Training([0.01f, 0.01f], [0.01f]);
+    this(uint input_layer_size)
+    {
+      this.input_layer_size = input_layer_size;
+      this.output_layer_size = input_layer_size;
     }
 
-    writeln("==RESULT==");
-    writeln(mlp.Classfy([1f,1f]));
-    writeln(mlp.Classfy([1f,0.01f]));
-    writeln(mlp.Classfy([0.01f,1f]));
-    writeln(mlp.Classfy([0.01f,0.01f]));
+    void addLayer(uint output_layer_size, activateFT activate, activateFT derived, double learn_rate)
+    {
+      this.addLayer(output_layer_size, activate.toDelegate, derived.toDelegate, learn_rate);
+    }
+    void addLayer(uint output_layer_size, activateT activate, activateT derived, double learn_rate)
+    {
+      layers ~= new Layer(this.output_layer_size, output_layer_size, activate, derived, learn_rate);
+      this.output_layer_size = output_layer_size;
+    }
 
+    auto predicate(double[] input)
+    in
+    {
+      assert(input.length == this.input_layer_size);
+    }
+    do
+    {
+      auto next = ForwardResult([], [], input);
+      foreach (layer; this.layers) {
+        next = layer.forward(next.output);
+      }
+      return next.output;
+    }
+
+    void training(double[][] inputs, double[][] expects)
+    in
+    {
+      assert(inputs.length == expects.length);
+    }
+    do
+    {
+      ulong[] indexes = iota(0, inputs.length).array;
+      foreach (i; indexes.randomShuffle) {
+        training_one(inputs[i], expects[i]);
+      }
+    }
+
+    void training_one(double[] input, double[] expect)
+    in
+    {
+      assert(input.length == this.input_layer_size);
+    }
+    do
+    {
+      ForwardResult[] forwarded = [ForwardResult([], [], input)];
+      foreach (layer; this.layers) {
+        forwarded ~= layer.forward(forwarded[$-1].output);
+      }
+
+      double[] deltas = [];
+      foreach (i; 0..output_layer_size) {
+        deltas ~= expect[i] - forwarded[$-1].output[i];
+      }
+
+      for (long i = this.layers.length - 1; i >= 0; i--) {
+        deltas = layers[i].backward(forwarded[i+1].input, forwarded[i+1].us, deltas);
+      }
+    }
+}
+
+
+void main()
+{
+  auto mlp = new MultiLayerPerceptron(2);
+  mlp.addLayer(10, &relu, &relu_d, 0.6);
+  mlp.addLayer(1, &sigmoid, &sigmoid_d, 0.3);
+
+  const auto T = 1.00;
+  const auto F = 0.01;
+
+  foreach(i; 0..3000) {
+    mlp.training([
+      [F, F],
+      [F, T],
+      [T, F],
+      [T, T],
+    ], [
+      [F], [T], [T], [F]
+    ]);
+  }
+
+  writeln(mlp.predicate([F, F]));
+  writeln(mlp.predicate([F, T]));
+  writeln(mlp.predicate([T, F]));
+  writeln(mlp.predicate([T, T]));
 }
