@@ -1,100 +1,141 @@
-import numpy
-from scipy import special
+import random
+import math
 
-class NeuralNet(object):
-    """ニューラルネットワーク"""
+class Layer():
+    """
+    ニューラルネットワークの層
+    """
+    def __init__(self, input_size, output_size, activation, derived, learn_rate):
+        self.input_size = input_size + 1
+        self.output_size = output_size
+        self.learn_rate = learn_rate
 
-    def __init__(self, layer_sizes):
+        self.weights = [[2 * random.random() - 1 for _ in range(input_size + 1)] for _ in range(output_size)]
+        self.activation = activation
+        self.derived = derived
+
+    def forward(self, input):
+        self.input = [1] + input # 逆伝播のときに使うのでとっておく 
+        self.output = []  # はい
+        self.unit_inputs = []  # 逆伝播のときに使う
+
+        for j in range(self.output_size): 
+            u = 0
+            for i in range(self.input_size):
+                u += self.input[i] * self.weights[j][i]
+            self.unit_inputs.append(u)
+            self.output.append(self.activation(u))
+        return self.output
+
+    def backward(self, xs):
+        deltas = []
+        d_ws = []
+
+        # W の変量を求める
+        for j in range(self.output_size):
+            delta_j = xs[j] * self.derived(self.unit_inputs[j])
+            d_ws2 = []
+            for i in range(self.input_size):
+                delta_w = delta_j * self.input[i]
+                d_ws2.append(delta_w)
+            deltas.append(delta_j)
+            d_ws.append(d_ws2)
+
+        # 上の階層へ送るための値（xs)を求める
+        r_xs = []
+        for i in range(self.input_size):
+            r_x = 0
+            for j in range(self.output_size):
+                r_x += deltas[j] * self.weights[j][i]
+            r_xs.append(r_x)
+
+
+        # W を更新
+        for j in range(self.output_size):
+            for i in range(self.input_size):
+                # 勾配を下るので減算
+                self.weights[j][i] -= d_ws[j][i] * self.learn_rate
+
+        return r_xs
+
+
+class NN():
+    """
+    ニューラルネットワークの本体
+    """
+
+    def __init__(self, input_size):
+        self.layers = []
+        self.lastlayer_output_size = input_size
+
+    def addLayer(self, size, activation, derived, learn_rate):
         """
-        :param layer_sizes: 各層の大きさが詰まったリスト。最初と最後は入力層と出力層
-        """
-
-        assert len(layer_sizes) >= 2 # 少なくとも入力出力層の分はあるはず
-
-        # 各層の間の重み行列のリスト
-        self.weights = []
-        for i in range(0, len(layer_sizes)-1):
-            h = layer_sizes[i+1]
-            w = layer_sizes[i]
-            self.weights.append(numpy.random.rand(h, w)-0.5)
+        中間層、あるいは出力層を追加する。
+        出力層の場合はderivedはNoneでいい
         
-    def try_value(self, input_vector):
-        """ある入力について、出力を計算する
-        
-        :param input_vector: 入力値。リスト
-        :return: 出力値
+        size: その layer が持つ unit の数
+        activation: 活性化関数 double -> double
+        derived: 活性化関数の微分 double -> double
+        learn_rate: 学習率
+        """
+        self.layers.append(Layer(
+            input_size=self.lastlayer_output_size,
+            output_size=size,
+            activation=activation,
+            derived=derived,
+            learn_rate=learn_rate))
+        self.lastlayer_output_size = size
+
+    def forward(self, input):
+        """
+        順伝播
+        """
+        last_output = input
+        for layer in self.layers:
+            last_output = layer.forward(last_output)
+        return last_output
+
+    def fit(self, inputs, expects):
+        """
+        逆伝播
         """
 
-        # 入力を行列に変換する
-        vs = numpy.array(input_vector, ndmin=2).T
-        outputs = [vs]
-        for w in self.weights:
-            # 重み付けして活性化関数に突っ込む
-            neruron_input = numpy.dot(w, vs)
-            vs = special.expit(neruron_input)
+        outputs = self.forward(inputs)
+        xs = []
+        for i in range(len(outputs)):
+            xs.append(outputs[i] - expects[i])
 
-            # 出力値を保存しておく
-            outputs.append(vs)
+        for layer in reversed(self.layers):
+            xs = layer.backward(xs)
 
-        assert len(outputs) == len(self.weights)+1        
-        self.outputs = outputs
-
-        return numpy.squeeze(numpy.asarray(vs.T))
+        return outputs
 
 
-    def study(self, input_vector, desired_vector):
-        """データから学習する
-        
-        :param input_vector: 入力値
-        :param desired_vector: 理想値
-        """
+def logistic(x):
+    return 1 / (1 + math.exp(-x))
 
-        # 学習率
-        rate = 0.6
+def logistic_d(x):
+    return (1 - logistic(x)) * logistic(x)
 
-        desired_vector = numpy.array(desired_vector, ndmin=2).T
-
-        # 計算させてみて誤差から学習する
-        tried = self.try_value(input_vector)
-        i = len(self.outputs)-1
-        error = None
-        while i > 0:
-            if i == len(self.outputs)-1:
-                error = desired_vector-self.outputs[i]
-            else:
-                error = numpy.dot(self.weights[i].T, error)
-            delta = rate * numpy.dot(error * self.outputs[i] * (1 - self.outputs[i]), self.outputs[i-1].T)
-            self.weights[i-1] += delta
-            i-=1
-
-
-    def judge(self):
-        """あるデータを判定する"""
-        pass
-
-    def __repr__(self):
-        s = "NeuralNet: {} layers".format(len(self.weights)+1)
-        return s
 
 def main():
-    """xor の学習をしてみる（できてない"""
+    network = NN(input_size=2)
+    network.addLayer(size=10, activation=logistic, derived=logistic_d, learn_rate=0.75)
+    network.addLayer(size=1, activation=logistic, derived=logistic_d, learn_rate=0.5)
 
-    # 2入力2出力
-    net = NeuralNet([2,5,2])
-    
-    T = 1
-    F = 1e-3 # 入力に0を持ってくるのはだめということ
+    T = 0.999
+    F = 0.001
+    for i in range(20000):
+        r1 = network.fit(inputs=[F, F], expects=[F])
+        r2 = network.fit(inputs=[F, T], expects=[T])
+        r3 = network.fit(inputs=[T, F], expects=[T])
+        r4 = network.fit(inputs=[T, T], expects=[F])
 
-    # 学習させる（おんなじデータで何回も学習させるのは直感的にダメそうって思う
-    for i in range(100):
-        net.study([F,F], [F,T])
-        net.study([F,T], [T,F])
-        net.study([T,F], [T,F])
-        net.study([T,T], [F,T])
-    
-    result = net.try_value([F,F])
-    print("result: {} <-- {}".format(result, result[0]<result[1]))
-    result = net.try_value([T,F])
-    print("result: {} <-- {}".format(result, result[0]>result[1]))
- 
-main()
+    print(network.forward(input=[F, F]))
+    print(network.forward(input=[F, T]))
+    print(network.forward(input=[T, F]))
+    print(network.forward(input=[T, T]))
+
+
+if __name__ == '__main__':
+    main()
